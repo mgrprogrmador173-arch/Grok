@@ -57,11 +57,13 @@
     var MODEL = "qwen/qwen3.6-plus-preview:free";
     var TARGET = "https://openrouter.ai/api/v1/chat/completions";
 
-    // Proxies CORS para contornar restrições do navegador
+    // Lista de proxies CORS atualizada e diversificada
     var PROXIES = [
         "https://api.allorigins.win/raw?url=",
         "https://corsproxy.io/?url=",
-        "https://proxy.cors.sh/"
+        "https://proxy.cors.sh/",
+        "https://thingproxy.freeboard.io/fetch/",
+        "https://cors-anywhere.herokuapp.com/" // Frequentemente exige ativação manual em https://cors-anywhere.herokuapp.com/corsdemo
     ];
 
     var roteiroGerado = null;
@@ -71,7 +73,7 @@
     });
 
     async function tentarFetch(proxyUrl, body) {
-        var url = proxyUrl.includes('proxy.cors.sh')
+        var url = proxyUrl.includes('proxy.cors.sh') || proxyUrl.includes('thingproxy') || proxyUrl.includes('cors-anywhere')
             ? proxyUrl + TARGET
             : proxyUrl + encodeURIComponent(TARGET);
 
@@ -82,32 +84,34 @@
         };
 
         if (proxyUrl.includes('proxy.cors.sh')) {
-            headers['x-cors-api-key'] = 'temp_' + Date.now();
-        }
-
-        var response = await fetch(url, {
-            method: 'POST',
-            headers: headers,
-            body: body
-        });
-
-        var text = await response.text();
-        
-        // Se a resposta começar com <, é HTML (provavelmente erro do proxy ou 404)
-        if (text.trim().startsWith('<')) {
-            throw new Error('O proxy retornou HTML em vez de JSON. Tente novamente.');
-        }
-
-        if (!response.ok) {
-            var msg = text;
-            try { msg = JSON.parse(text)?.error?.message || text; } catch(ex) {}
-            throw new Error('HTTP ' + response.status + ': ' + msg.substring(0, 150));
+            headers['x-cors-api-key'] = 'temp_' + Math.floor(Math.random() * 1000000);
         }
 
         try {
+            var response = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: body
+            });
+
+            var text = await response.text();
+            
+            if (text.trim().startsWith('<')) {
+                throw new Error('O servidor retornou HTML (provavelmente erro 404 ou 500).');
+            }
+
+            if (!response.ok) {
+                var msg = text;
+                try { msg = JSON.parse(text)?.error?.message || text; } catch(ex) {}
+                throw new Error('Erro ' + response.status + ': ' + msg.substring(0, 100));
+            }
+
             return JSON.parse(text);
-        } catch (e) {
-            throw new Error('Resposta inválida do servidor (não é JSON).');
+        } catch (err) {
+            if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
+                throw new Error('Bloqueio de conexão (CORS) ou servidor offline.');
+            }
+            throw err;
         }
     }
 
@@ -127,9 +131,9 @@
 
         var prompt = 'Você é um especialista em roteiros para o canal "Curionauta". TEMA: ' + tema + '.\n' +
             'Retorne APENAS um JSON puro (sem markdown, sem blocos de código, sem nenhum texto extra) neste formato exato:\n' +
-            '{"v1":"Prompt de Vídeo (English): [Cinematic 4k...] Generate only one single video output, no variations.\\n\\nNarração (Português): [Gancho]",' +
-            '"v2":"Prompt de Vídeo (English): [Continuity...] Generate only one single video output, no variations.\\n\\nNarração (Português): [Explicação]",' +
-            '"v3":"Prompt de Vídeo (English): [Epic conclusion...] Generate only one single video output, no variations.\\n\\nNarração (Português): [CTA @curionauta14]",' +
+            '{"v1":"Prompt de Vídeo (English): [Cinematic 4k...]\\n\\nNarração (Português): [Gancho]",' +
+            '"v2":"Prompt de Vídeo (English): [Continuity...]\\n\\nNarração (Português): [Explicação]",' +
+            '"v3":"Prompt de Vídeo (English): [Epic conclusion...]\\n\\nNarração (Português): [CTA @curionauta14]",' +
             '"tiktok":"Descrição do vídeo + 4 hashtags"}';
 
         var body = JSON.stringify({
@@ -140,21 +144,22 @@
         });
 
         var dados = null;
-        var ultimoErro = '';
+        var erros = [];
 
         for (var i = 0; i < PROXIES.length; i++) {
             try {
-                setStatus('🛰️ Conectando via servidor ' + (i + 1) + '...', 'inf');
+                setStatus('🛰️ Tentando conexão ' + (i + 1) + '...', 'inf');
                 dados = await tentarFetch(PROXIES[i], body);
-                break; 
+                if (dados) break; 
             } catch(e) {
-                ultimoErro = e.message;
-                console.warn('Proxy ' + i + ' falhou:', e.message);
+                erros.push('Proxy ' + (i + 1) + ': ' + e.message);
+                console.warn('Falha no proxy ' + (i + 1) + ':', e.message);
             }
         }
 
         if (!dados) {
-            setStatus('❌ Erro de conexão: ' + ultimoErro, 'err');
+            setStatus('❌ Falha na conexão. Tente novamente em instantes.', 'err');
+            console.error('Relatório de erros:', erros.join(' | '));
             btn.disabled = false;
             return;
         }
@@ -190,7 +195,7 @@
             btnCapa.style.display = 'block';
 
         } catch(e) {
-            setStatus('❌ Erro: ' + e.message, 'err');
+            setStatus('❌ Erro no processamento: ' + e.message, 'err');
         } finally {
             btn.disabled = false;
         }
