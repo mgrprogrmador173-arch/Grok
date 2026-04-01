@@ -33,7 +33,7 @@
 <body>
 <div class="container">
     <h1>🚀 Curionauta PRO</h1>
-    <p class="subtitle">Gerador de Roteiros e Prompts Grok</p>
+    <p class="subtitle">Gerador de Roteiros e Prompts Grok (Backend Seguro)</p>
 
     <label>TEMA DO VÍDEO:</label>
     <input type="text" id="tema" placeholder="Ex: O mistério de Marte">
@@ -53,54 +53,12 @@
 </div>
 
 <script>
-    var API_KEY = "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";
-    var MODEL = "qwen/qwen3-30b-a3b:free";
-    var TARGET = "https://openrouter.ai/api/v1/chat/completions";
-
-    // 3 proxies em sequência — tenta o próximo se o anterior falhar
-    var PROXIES = [
-        "https://api.allorigins.win/raw?url=",
-        "https://corsproxy.io/?url=",
-        "https://proxy.cors.sh/"
-    ];
-
+    var MODEL = "qwen/qwen3.6-plus-preview:free";
     var roteiroGerado = null;
 
     document.getElementById('tema').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') gerarConteudo();
     });
-
-    async function tentarFetch(proxyUrl, body) {
-        var url = proxyUrl.includes('proxy.cors.sh')
-            ? proxyUrl + TARGET
-            : proxyUrl + encodeURIComponent(TARGET);
-
-        var headers = {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + API_KEY,
-            'X-Title': 'Curionauta PRO'
-        };
-
-        // cors.sh exige header extra
-        if (proxyUrl.includes('proxy.cors.sh')) {
-            headers['x-cors-api-key'] = 'temp_' + Date.now();
-        }
-
-        var response = await fetch(url, {
-            method: 'POST',
-            headers: headers,
-            body: body
-        });
-
-        if (!response.ok) {
-            var t = await response.text();
-            var msg = t;
-            try { msg = JSON.parse(t)?.error?.message || t; } catch(ex) {}
-            throw new Error('HTTP ' + response.status + ': ' + msg.substring(0, 150));
-        }
-
-        return await response.json();
-    }
 
     async function gerarConteudo() {
         var tema = document.getElementById('tema').value.trim();
@@ -123,36 +81,23 @@
             '"v3":"Prompt de Vídeo (English): [Epic conclusion...] Generate only one single video output, no variations.\\n\\nNarração (Português): [CTA @curionauta14]",' +
             '"tiktok":"Descrição do vídeo + 4 hashtags"}';
 
-        var body = JSON.stringify({
-            model: MODEL,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.7,
-            max_tokens: 2000
-        });
-
-        var dados = null;
-        var ultimoErro = '';
-
-        for (var i = 0; i < PROXIES.length; i++) {
-            try {
-                setStatus('🛰️ Tentando conexão ' + (i + 1) + ' de ' + PROXIES.length + '...', 'inf');
-                dados = await tentarFetch(PROXIES[i], body);
-                break; // sucesso
-            } catch(e) {
-                ultimoErro = e.message;
-                console.warn('Proxy ' + i + ' falhou:', e.message);
-            }
-        }
-
-        if (!dados) {
-            setStatus('❌ Todos os proxies falharam. Último erro: ' + ultimoErro, 'err');
-            btn.disabled = false;
-            return;
-        }
+        setStatus('🛰️ Enviando para o backend seguro...', 'inf');
 
         try {
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt, model: MODEL })
+            });
+
+            const dados = await response.json();
+
+            if (!response.ok) {
+                throw new Error(dados.error?.message || 'Erro no servidor');
+            }
+
             if (!dados.choices || !dados.choices[0]) {
-                throw new Error('Resposta inválida: ' + JSON.stringify(dados).substring(0, 200));
+                throw new Error('Resposta inválida da API');
             }
 
             var texto = dados.choices[0].message?.content || '';
