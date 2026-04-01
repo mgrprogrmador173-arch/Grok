@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Curionauta PRO</title>
+    <style>
+        :root { --primary: #58a6ff; --bg: #0d1117; --card: #161b22; --text: #c9d1d9; --success: #238636; --purple: #8b5cf6; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 16px; }
+        .container { max-width: 780px; margin: auto; background: var(--card); padding: 22px; border-radius: 12px; }
+        h1 { color: var(--primary); text-align: center; text-transform: uppercase; font-size: 20px; letter-spacing: 1px; margin-bottom: 4px; }
+        .subtitle { text-align: center; font-size: 13px; color: #8b949e; margin-bottom: 22px; }
+        label { display: block; margin: 14px 0 7px; font-weight: bold; font-size: 13px; color: var(--primary); }
+        input { width: 100%; padding: 14px; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: white; font-size: 15px; outline: none; }
+        .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; margin-top: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-green  { background: var(--success); color: white; }
+        .btn-purple { background: var(--purple); color: white; display: none; }
+        .status { text-align: center; font-size: 13px; margin-top: 14px; font-weight: bold; min-height: 20px; }
+        .status.ok  { color: #3fb950; }
+        .status.err { color: #f85149; }
+        .status.inf { color: #f0883e; }
+        .box { margin-top: 16px; padding: 15px; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; }
+        .box.tiktok { background: #1c2128; border: none; border-left: 4px solid var(--primary); }
+        .box-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #30363d; }
+        .box-label { color: #f0883e; font-size: 11px; font-weight: bold; }
+        .copy-btn { background: #3a3a3a; color: white; border: none; padding: 4px 12px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: bold; }
+        .copy-btn.ok { background: var(--success); }
+        pre { white-space: pre-wrap; word-wrap: break-word; color: #d1d5db; font-size: 13px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🚀 Curionauta PRO</h1>
+    <p class="subtitle">Gerador de Roteiros e Prompts Grok</p>
+
+    <label>TEMA DO VÍDEO:</label>
+    <input type="text" id="tema" placeholder="Ex: O mistério de Marte">
+
+    <button class="btn btn-green" id="btnGerar" onclick="gerarConteudo()">GERAR SEQUÊNCIA COMPLETA</button>
+    <button class="btn btn-purple" id="btnCapa" onclick="gerarCapa()">GERAR PROMPT PARA CAPA DO TIKTOK</button>
+
+    <div id="status" class="status inf"></div>
+    <div id="resultado"></div>
+    <div id="capaBox" class="box" style="display:none; margin-top:16px;">
+        <div class="box-header">
+            <span class="box-label">PROMPT PARA CAPA (Grok Image)</span>
+            <button class="copy-btn" id="btnCopyCapa" onclick="copiar('capa')">COPIAR</button>
+        </div>
+        <pre id="textoCapa"></pre>
+    </div>
+</div>
+
+<script>
+    var API_KEY = "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";
+    var MODEL = "qwen/qwen3-30b-a3b:free";
+    var TARGET = "https://openrouter.ai/api/v1/chat/completions";
+
+    // 3 proxies em sequência — tenta o próximo se o anterior falhar
+    var PROXIES = [
+        "https://api.allorigins.win/raw?url=",
+        "https://corsproxy.io/?url=",
+        "https://proxy.cors.sh/"
+    ];
+
+    var roteiroGerado = null;
+
+    document.getElementById('tema').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') gerarConteudo();
+    });
+
+    async function tentarFetch(proxyUrl, body) {
+        var url = proxyUrl.includes('proxy.cors.sh')
+            ? proxyUrl + TARGET
+            : proxyUrl + encodeURIComponent(TARGET);
+
+        var headers = {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + API_KEY,
+            'X-Title': 'Curionauta PRO'
+        };
+
+        // cors.sh exige header extra
+        if (proxyUrl.includes('proxy.cors.sh')) {
+            headers['x-cors-api-key'] = 'temp_' + Date.now();
+        }
+
+        var response = await fetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: body
+        });
+
+        if (!response.ok) {
+            var t = await response.text();
+            var msg = t;
+            try { msg = JSON.parse(t)?.error?.message || t; } catch(ex) {}
+            throw new Error('HTTP ' + response.status + ': ' + msg.substring(0, 150));
+        }
+
+        return await response.json();
+    }
+
+    async function gerarConteudo() {
+        var tema = document.getElementById('tema').value.trim();
+        if (!tema) { alert('Digite um tema primeiro!'); return; }
+
+        var btn = document.getElementById('btnGerar');
+        var btnCapa = document.getElementById('btnCapa');
+        var resDiv = document.getElementById('resultado');
+
+        btn.disabled = true;
+        btnCapa.style.display = 'none';
+        roteiroGerado = null;
+        resDiv.innerHTML = '';
+        document.getElementById('capaBox').style.display = 'none';
+
+        var prompt = 'Você é um especialista em roteiros para o canal "Curionauta". TEMA: ' + tema + '.\n' +
+            'Retorne APENAS um JSON puro (sem markdown, sem blocos de código, sem nenhum texto extra) neste formato exato:\n' +
+            '{"v1":"Prompt de Vídeo (English): [Cinematic 4k...] Generate only one single video output, no variations.\\n\\nNarração (Português): [Gancho]",' +
+            '"v2":"Prompt de Vídeo (English): [Continuity...] Generate only one single video output, no variations.\\n\\nNarração (Português): [Explicação]",' +
+            '"v3":"Prompt de Vídeo (English): [Epic conclusion...] Generate only one single video output, no variations.\\n\\nNarração (Português): [CTA @curionauta14]",' +
+            '"tiktok":"Descrição do vídeo + 4 hashtags"}';
+
+        var body = JSON.stringify({
+            model: MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.7,
+            max_tokens: 2000
+        });
+
+        var dados = null;
+        var ultimoErro = '';
+
+        for (var i = 0; i < PROXIES.length; i++) {
+            try {
+                setStatus('🛰️ Tentando conexão ' + (i + 1) + ' de ' + PROXIES.length + '...', 'inf');
+                dados = await tentarFetch(PROXIES[i], body);
+                break; // sucesso
+            } catch(e) {
+                ultimoErro = e.message;
+                console.warn('Proxy ' + i + ' falhou:', e.message);
+            }
+        }
+
+        if (!dados) {
+            setStatus('❌ Todos os proxies falharam. Último erro: ' + ultimoErro, 'err');
+            btn.disabled = false;
+            return;
+        }
+
+        try {
+            if (!dados.choices || !dados.choices[0]) {
+                throw new Error('Resposta inválida: ' + JSON.stringify(dados).substring(0, 200));
+            }
+
+            var texto = dados.choices[0].message?.content || '';
+            texto = texto.replace(/<think>[\s\S]*?<\/think>/gi, '')
+                         .replace(/```json/gi, '')
+                         .replace(/```/g, '')
+                         .trim();
+
+            var parsed;
+            try {
+                parsed = JSON.parse(texto);
+            } catch(e) {
+                var match = texto.match(/\{[\s\S]*\}/);
+                if (match) parsed = JSON.parse(match[0]);
+                else throw new Error('Falha ao processar JSON: ' + texto.substring(0, 300));
+            }
+
+            roteiroGerado = parsed;
+            resDiv.innerHTML =
+                boxHTML('VÍDEO 1 (Gancho)', 'v1', parsed.v1, false) +
+                boxHTML('VÍDEO 2 (Explicação)', 'v2', parsed.v2, false) +
+                boxHTML('VÍDEO 3 (CTA)', 'v3', parsed.v3, false) +
+                boxHTML('TIKTOK META', 'tiktok', parsed.tiktok, true);
+
+            setStatus('✅ Roteiro gerado com sucesso!', 'ok');
+            btnCapa.style.display = 'block';
+
+        } catch(e) {
+            setStatus('❌ Erro: ' + e.message, 'err');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function boxHTML(label, id, texto, isTiktok) {
+        var cls = isTiktok ? 'box tiktok' : 'box';
+        return '<div class="' + cls + '">' +
+            '<div class="box-header">' +
+                '<span class="box-label">' + label + '</span>' +
+                '<button class="copy-btn" id="btnCopy_' + id + '" onclick="copiar(\'' + id + '\')">COPIAR</button>' +
+            '</div>' +
+            '<pre id="text_' + id + '">' + escHtml(texto) + '</pre>' +
+        '</div>';
+    }
+
+    function gerarCapa() {
+        if (!roteiroGerado) return;
+        var tema = document.getElementById('tema').value;
+        var isMarte = tema.toLowerCase().includes('marte');
+        var cap = 'A futuristic, sleek, and eye-catching TikTok video cover for a video titled "' + tema + '". ' +
+            'Cosmic elements like ' + (isMarte ? 'Mars, stars, and a spaceship' : 'related visuals') + ', bold title in center. ' +
+            'Vibrant, modern, engaging style for a science TikTok channel. 9:16 aspect ratio, high resolution, bright colors.';
+        document.getElementById('textoCapa').textContent = cap;
+        document.getElementById('capaBox').style.display = 'block';
+    }
+
+    function copiar(id) {
+        var el = id === 'capa' ? document.getElementById('textoCapa') : document.getElementById('text_' + id);
+        var btnId = id === 'capa' ? 'btnCopyCapa' : 'btnCopy_' + id;
+        if (!el) return;
+        navigator.clipboard.writeText(el.innerText).then(function() {
+            var b = document.getElementById(btnId);
+            if (b) {
+                b.textContent = '✓ COPIADO';
+                b.classList.add('ok');
+                setTimeout(function() { b.textContent = 'COPIAR'; b.classList.remove('ok'); }, 2000);
+            }
+        });
+    }
+
+    function escHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function setStatus(msg, type) {
+        var el = document.getElementById('status');
+        el.textContent = msg;
+        el.className = 'status ' + type;
+    }
+</script>
+</body>
+</html>
