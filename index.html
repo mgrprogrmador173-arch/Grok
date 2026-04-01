@@ -33,7 +33,7 @@
 <body>
 <div class="container">
     <h1>🚀 Curionauta PRO</h1>
-    <p class="subtitle">Gerador de Roteiros e Prompts Grok</p>
+    <p class="subtitle">Gerador de Roteiros e Prompts Grok (Chamada Direta)</p>
 
     <label>TEMA DO VÍDEO:</label>
     <input type="text" id="tema" placeholder="Ex: O mistério de Marte">
@@ -57,63 +57,11 @@
     var MODEL = "qwen/qwen3.6-plus-preview:free";
     var TARGET = "https://openrouter.ai/api/v1/chat/completions";
 
-    // Lista de proxies CORS atualizada e diversificada
-    var PROXIES = [
-        "https://api.allorigins.win/raw?url=",
-        "https://corsproxy.io/?url=",
-        "https://proxy.cors.sh/",
-        "https://thingproxy.freeboard.io/fetch/",
-        "https://cors-anywhere.herokuapp.com/" // Frequentemente exige ativação manual em https://cors-anywhere.herokuapp.com/corsdemo
-    ];
-
     var roteiroGerado = null;
 
     document.getElementById('tema').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') gerarConteudo();
     });
-
-    async function tentarFetch(proxyUrl, body) {
-        var url = proxyUrl.includes('proxy.cors.sh') || proxyUrl.includes('thingproxy') || proxyUrl.includes('cors-anywhere')
-            ? proxyUrl + TARGET
-            : proxyUrl + encodeURIComponent(TARGET);
-
-        var headers = {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + API_KEY,
-            'X-Title': 'Curionauta PRO'
-        };
-
-        if (proxyUrl.includes('proxy.cors.sh')) {
-            headers['x-cors-api-key'] = 'temp_' + Math.floor(Math.random() * 1000000);
-        }
-
-        try {
-            var response = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: body
-            });
-
-            var text = await response.text();
-            
-            if (text.trim().startsWith('<')) {
-                throw new Error('O servidor retornou HTML (provavelmente erro 404 ou 500).');
-            }
-
-            if (!response.ok) {
-                var msg = text;
-                try { msg = JSON.parse(text)?.error?.message || text; } catch(ex) {}
-                throw new Error('Erro ' + response.status + ': ' + msg.substring(0, 100));
-            }
-
-            return JSON.parse(text);
-        } catch (err) {
-            if (err.name === 'TypeError' && err.message === 'Failed to fetch') {
-                throw new Error('Bloqueio de conexão (CORS) ou servidor offline.');
-            }
-            throw err;
-        }
-    }
 
     async function gerarConteudo() {
         var tema = document.getElementById('tema').value.trim();
@@ -143,28 +91,28 @@
             max_tokens: 2000
         });
 
-        var dados = null;
-        var erros = [];
-
-        for (var i = 0; i < PROXIES.length; i++) {
-            try {
-                setStatus('🛰️ Tentando conexão ' + (i + 1) + '...', 'inf');
-                dados = await tentarFetch(PROXIES[i], body);
-                if (dados) break; 
-            } catch(e) {
-                erros.push('Proxy ' + (i + 1) + ': ' + e.message);
-                console.warn('Falha no proxy ' + (i + 1) + ':', e.message);
-            }
-        }
-
-        if (!dados) {
-            setStatus('❌ Falha na conexão. Tente novamente em instantes.', 'err');
-            console.error('Relatório de erros:', erros.join(' | '));
-            btn.disabled = false;
-            return;
-        }
-
         try {
+            setStatus('🛰️ Conectando diretamente à OpenRouter...', 'inf');
+            
+            var response = await fetch(TARGET, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + API_KEY,
+                    'X-Title': 'Curionauta PRO'
+                },
+                body: body
+            });
+
+            if (!response.ok) {
+                var text = await response.text();
+                var msg = text;
+                try { msg = JSON.parse(text)?.error?.message || text; } catch(ex) {}
+                throw new Error('Erro ' + response.status + ': ' + msg.substring(0, 100));
+            }
+
+            var dados = await response.json();
+
             if (!dados.choices || !dados.choices[0]) {
                 throw new Error('Resposta da API incompleta.');
             }
@@ -195,7 +143,12 @@
             btnCapa.style.display = 'block';
 
         } catch(e) {
-            setStatus('❌ Erro no processamento: ' + e.message, 'err');
+            if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
+                setStatus('❌ Bloqueio de conexão (CORS). O navegador impediu a chamada direta.', 'err');
+            } else {
+                setStatus('❌ Erro: ' + e.message, 'err');
+            }
+            console.error('Erro detalhado:', e);
         } finally {
             btn.disabled = false;
         }
