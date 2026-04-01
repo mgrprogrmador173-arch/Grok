@@ -57,7 +57,7 @@
     var MODEL = "qwen/qwen3.6-plus-preview:free";
     var TARGET = "https://openrouter.ai/api/v1/chat/completions";
 
-    // 3 proxies em sequência — tenta o próximo se o anterior falhar
+    // Proxies CORS para contornar restrições do navegador
     var PROXIES = [
         "https://api.allorigins.win/raw?url=",
         "https://corsproxy.io/?url=",
@@ -81,7 +81,6 @@
             'X-Title': 'Curionauta PRO'
         };
 
-        // cors.sh exige header extra
         if (proxyUrl.includes('proxy.cors.sh')) {
             headers['x-cors-api-key'] = 'temp_' + Date.now();
         }
@@ -92,14 +91,24 @@
             body: body
         });
 
+        var text = await response.text();
+        
+        // Se a resposta começar com <, é HTML (provavelmente erro do proxy ou 404)
+        if (text.trim().startsWith('<')) {
+            throw new Error('O proxy retornou HTML em vez de JSON. Tente novamente.');
+        }
+
         if (!response.ok) {
-            var t = await response.text();
-            var msg = t;
-            try { msg = JSON.parse(t)?.error?.message || t; } catch(ex) {}
+            var msg = text;
+            try { msg = JSON.parse(text)?.error?.message || text; } catch(ex) {}
             throw new Error('HTTP ' + response.status + ': ' + msg.substring(0, 150));
         }
 
-        return await response.json();
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            throw new Error('Resposta inválida do servidor (não é JSON).');
+        }
     }
 
     async function gerarConteudo() {
@@ -135,9 +144,9 @@
 
         for (var i = 0; i < PROXIES.length; i++) {
             try {
-                setStatus('🛰️ Tentando conexão ' + (i + 1) + ' de ' + PROXIES.length + '...', 'inf');
+                setStatus('🛰️ Conectando via servidor ' + (i + 1) + '...', 'inf');
                 dados = await tentarFetch(PROXIES[i], body);
-                break; // sucesso
+                break; 
             } catch(e) {
                 ultimoErro = e.message;
                 console.warn('Proxy ' + i + ' falhou:', e.message);
@@ -145,14 +154,14 @@
         }
 
         if (!dados) {
-            setStatus('❌ Todos os proxies falharam. Último erro: ' + ultimoErro, 'err');
+            setStatus('❌ Erro de conexão: ' + ultimoErro, 'err');
             btn.disabled = false;
             return;
         }
 
         try {
             if (!dados.choices || !dados.choices[0]) {
-                throw new Error('Resposta inválida: ' + JSON.stringify(dados).substring(0, 200));
+                throw new Error('Resposta da API incompleta.');
             }
 
             var texto = dados.choices[0].message?.content || '';
@@ -167,7 +176,7 @@
             } catch(e) {
                 var match = texto.match(/\{[\s\S]*\}/);
                 if (match) parsed = JSON.parse(match[0]);
-                else throw new Error('Falha ao processar JSON: ' + texto.substring(0, 300));
+                else throw new Error('Erro ao processar o texto gerado.');
             }
 
             roteiroGerado = parsed;
